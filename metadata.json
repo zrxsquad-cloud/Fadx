@@ -1,0 +1,6 @@
+{
+  "name": "Fadx",
+  "description": "Modern mobile social networking experience with feed, stories, videos, messaging, groups, pages, marketplace, and events.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
