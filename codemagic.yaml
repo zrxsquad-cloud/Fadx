@@ -6,12 +6,7 @@ workflows:
     scripts:
       - name: Make gradlew executable
         script: |
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-          else
-            gradle wrapper
-            chmod +x ./gradlew
-          fi
+          chmod +x ./gradlew
       - name: Build Android Debug APK
         script: ./gradlew assembleDebug --stacktrace
     artifacts:
