@@ -13,7 +13,7 @@ workflows:
             chmod +x ./gradlew
           fi
       - name: Build Android Debug APK
-        script: ./gradlew assembleDebug
+        script: ./gradlew assembleDebug --stacktrace
     artifacts:
       - build/outputs/**/*.apk
       - app/build/outputs/**/*.apk
