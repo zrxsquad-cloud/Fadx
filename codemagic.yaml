@@ -5,7 +5,13 @@ workflows:
     instance_type: mac_mini_m1
     scripts:
       - name: Make gradlew executable
-        script: chmod +x ./gradlew
+        script: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          else
+            gradle wrapper
+            chmod +x ./gradlew
+          fi
       - name: Build Android Debug APK
         script: ./gradlew assembleDebug
     artifacts:
