@@ -81,6 +81,7 @@ fun FadxApp(
     val searchQuery by viewModel.searchQuery.collectAsState()
     val searchCategory by viewModel.searchCategory.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
+    val supabaseStatus by viewModel.supabaseConnectionStatus.collectAsState()
 
     // Back handling
     BackHandler(enabled = currentScreen !is Screen.Main && currentScreen !is Screen.Welcome) {
@@ -375,6 +376,8 @@ fun FadxApp(
                                 onThemeChange = { viewModel.setThemeMode(it) },
                                 twoFactorEnabled = twoFactorEnabled,
                                 onToggle2FA = { viewModel.toggle2FA() },
+                                supabaseStatus = supabaseStatus,
+                                onTestSupabase = { viewModel.testSupabaseConnection() },
                                 onBackClick = { viewModel.navigateBack() }
                             )
                         }

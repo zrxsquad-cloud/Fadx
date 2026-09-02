@@ -1,5 +1,7 @@
 package com.example.data
 
+import com.example.data.supabase.SupabaseClient
+import com.example.data.supabase.SupabaseConfig
 import com.example.model.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -7,6 +9,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
 class FadxRepository {
+
+    // Supabase Remote Client Instance
+    val supabaseClient: SupabaseClient = SupabaseClient.instance
+
 
     // Current Authenticated User
     private val _currentUser = MutableStateFlow(

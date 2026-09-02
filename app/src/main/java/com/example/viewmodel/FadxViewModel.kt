@@ -342,4 +342,21 @@ class FadxViewModel(
         repository.toggle2FA()
         showToast("Two-Factor Authentication toggled")
     }
+
+    // Supabase Integration
+    val supabaseSession = repository.supabaseClient.session
+    val supabaseConnectionStatus = repository.supabaseClient.connectionStatus
+    val supabaseLastError = repository.supabaseClient.lastError
+
+    fun testSupabaseConnection() {
+        viewModelScope.launch {
+            val result = repository.supabaseClient.testConnection()
+            if (result.isSuccess) {
+                showToast("Connected to Supabase successfully 🟢")
+            } else {
+                showToast("Supabase connection: ${result.exceptionOrNull()?.message ?: "Check network"}")
+            }
+        }
+    }
 }
+

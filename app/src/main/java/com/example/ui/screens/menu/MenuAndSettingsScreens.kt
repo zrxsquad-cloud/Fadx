@@ -24,6 +24,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.supabase.SupabaseConfig
+import com.example.data.supabase.SupabaseConnectionStatus
 import com.example.model.*
 import com.example.ui.components.AvatarImage
 import com.example.ui.components.FadxBrandIcon
@@ -314,6 +316,8 @@ fun SettingsScreen(
     onThemeChange: (String) -> Unit,
     twoFactorEnabled: Boolean,
     onToggle2FA: () -> Unit,
+    supabaseStatus: SupabaseConnectionStatus = SupabaseConnectionStatus.IDLE,
+    onTestSupabase: () -> Unit = {},
     onBackClick: () -> Unit
 ) {
     Scaffold(
@@ -368,6 +372,78 @@ fun SettingsScreen(
                                     label = { Text("Light") }
                                 )
                             }
+                        }
+                    }
+                }
+            }
+
+            // Supabase Cloud Backend Configuration
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.CloudQueue,
+                                    contentDescription = "Supabase",
+                                    tint = FadxSecondary
+                                )
+                                Text("Supabase Cloud Backend", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            }
+
+                            // Status Indicator Chip
+                            val (badgeText, badgeBg, badgeTextColor) = when (supabaseStatus) {
+                                SupabaseConnectionStatus.CONNECTED -> Triple("Active 🟢", Color(0xFF1B5E20).copy(alpha = 0.2f), Color(0xFF4CAF50))
+                                SupabaseConnectionStatus.CONNECTING -> Triple("Checking...", Color(0xFFF57F17).copy(alpha = 0.2f), Color(0xFFFFB300))
+                                SupabaseConnectionStatus.ERROR -> Triple("Issue ⚠️", Color(0xFFB71C1C).copy(alpha = 0.2f), Color(0xFFEF5350))
+                                SupabaseConnectionStatus.IDLE -> Triple("Configured", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = badgeBg
+                            ) {
+                                Text(
+                                    text = badgeText,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = badgeTextColor,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "URL: ${SupabaseConfig.url}",
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Key: ${SupabaseConfig.publishableKey.take(16)}...",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        OutlinedButton(
+                            onClick = onTestSupabase,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Sync, contentDescription = "Test connection", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Test Supabase Connection", fontSize = 13.sp)
                         }
                     }
                 }
