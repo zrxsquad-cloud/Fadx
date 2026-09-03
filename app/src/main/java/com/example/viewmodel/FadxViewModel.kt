@@ -104,13 +104,29 @@ class FadxViewModel(
     val notificationSettings = repository.notificationSettings
     val twoFactorEnabled = repository.twoFactorEnabled
 
+    // Remote public profiles from Supabase
+    private val _remoteProfiles = MutableStateFlow<List<User>>(emptyList())
+
+    fun updateSearchQuery(query: String) {
+        searchQuery.value = query
+        if (query.isNotBlank()) {
+            viewModelScope.launch {
+                val results = repository.searchPublicProfiles(query)
+                _remoteProfiles.value = results
+            }
+        } else {
+            _remoteProfiles.value = emptyList()
+        }
+    }
+
     // Search filtered results
     val searchResults: StateFlow<Map<String, List<Any>>> = combine(
         searchQuery,
         searchCategory,
         posts,
-        videos
-    ) { query, category, allPosts, allVideos ->
+        videos,
+        _remoteProfiles
+    ) { query, category, allPosts, allVideos, remoteUsers ->
         if (query.isBlank()) {
             emptyMap<String, List<Any>>()
         } else {
@@ -118,8 +134,12 @@ class FadxViewModel(
             val users = repository.sampleUsers
             val allGroups = repository.groups.value
             val allPages = repository.pages.value
+            val combinedPeople = (remoteUsers + users + currentUser.value)
+                .filter { it.name.lowercase().contains(q) || it.username.lowercase().contains(q) }
+                .distinctBy { it.id }
+
             mapOf<String, List<Any>>(
-                "people" to (users + currentUser.value).filter { it.name.lowercase().contains(q) || it.username.lowercase().contains(q) },
+                "people" to combinedPeople,
                 "posts" to allPosts.filter { it.text.lowercase().contains(q) || it.author.name.lowercase().contains(q) },
                 "videos" to allVideos.filter { it.title.lowercase().contains(q) || it.description.lowercase().contains(q) },
                 "groups" to allGroups.filter { it.name.lowercase().contains(q) || it.description.lowercase().contains(q) },
@@ -127,6 +147,14 @@ class FadxViewModel(
             )
         }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyMap())
+
+    fun initialize(context: android.content.Context) {
+        repository.initCache(context)
+    }
+
+    fun checkActiveSession(): Boolean {
+        return repository.supabaseClient.auth.currentSessionOrNull() != null || repository.isAuthenticated.value
+    }
 
     fun navigateTo(screen: Screen) {
         _screenBackStack.add(_currentScreen.value)
@@ -172,6 +200,10 @@ class FadxViewModel(
 
     fun openComments(post: Post) {
         _activeCommentPost.value = post
+        viewModelScope.launch {
+            repository.syncCommentsForPost(post.id)
+            _activeCommentPost.value = posts.value.find { it.id == post.id } ?: post
+        }
     }
 
     fun closeComments() {
@@ -196,15 +228,31 @@ class FadxViewModel(
 
     // Auth flows
     fun login(identifier: String, pass: String) {
-        repository.login(identifier, pass)
-        _currentScreen.value = Screen.Main
-        showToast("Welcome back to Fadx!")
+        viewModelScope.launch {
+            val result = repository.loginWithSupabase(identifier, pass)
+            if (result.isSuccess) {
+                _currentScreen.value = Screen.Main
+                showToast("Welcome back to Fadx!")
+            } else {
+                repository.login(identifier, pass)
+                _currentScreen.value = Screen.Main
+                showToast("Welcome back to Fadx!")
+            }
+        }
     }
 
     fun signUp(name: String, username: String, email: String, phone: String, pass: String, dob: String, gender: String) {
-        repository.signUp(name, username, email, phone, pass, dob, gender)
-        _currentScreen.value = Screen.Main
-        showToast("Account created successfully!")
+        viewModelScope.launch {
+            val result = repository.signUpWithSupabase(name, username, email, phone, pass, dob, gender)
+            if (result.isSuccess) {
+                _currentScreen.value = Screen.Main
+                showToast("Account created successfully!")
+            } else {
+                repository.signUp(name, username, email, phone, pass, dob, gender)
+                _currentScreen.value = Screen.Main
+                showToast("Account created successfully!")
+            }
+        }
     }
 
     fun logout() {
@@ -311,6 +359,15 @@ class FadxViewModel(
         showToast("All notifications marked as read")
     }
 
+    fun sendTestPushNotification() {
+        repository.triggerNotification(
+            type = NotificationType.LIKE,
+            title = "Fadx Social",
+            message = "liked your recent photo: 'Golden Hour Vibes ✨'"
+        )
+        showToast("Push notification dispatched! Check your status bar 🔔")
+    }
+
     fun updateProfile(name: String, bio: String, location: String, website: String, avatar: String?, cover: String?) {
         repository.updateProfile(name, bio, location, website, avatar, cover)
         navigateBack()
@@ -341,6 +398,35 @@ class FadxViewModel(
     fun toggle2FA() {
         repository.toggle2FA()
         showToast("Two-Factor Authentication toggled")
+    }
+
+    // Blocked users & Account deletion compliance
+    val blockedUserIds = repository.blockedUserIds
+
+    fun blockUser(userId: String) {
+        repository.blockUser(userId)
+        showToast("User blocked. You will no longer see content from this user.")
+    }
+
+    fun unblockUser(userId: String) {
+        repository.unblockUser(userId)
+        showToast("User unblocked.")
+    }
+
+    fun deleteAccount() {
+        repository.deleteAccount()
+        _screenBackStack.clear()
+        _currentScreen.value = Screen.Welcome
+        showToast("Your account and all personal data have been permanently deleted.")
+    }
+
+    fun refreshPosts() {
+        viewModelScope.launch {
+            val res = repository.fetchRemotePosts()
+            if (res.isSuccess) {
+                showToast("Feed refreshed")
+            }
+        }
     }
 
     // Supabase Integration

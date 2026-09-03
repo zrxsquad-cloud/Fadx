@@ -82,12 +82,18 @@ fun FadxApp(
     val searchCategory by viewModel.searchCategory.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
     val supabaseStatus by viewModel.supabaseConnectionStatus.collectAsState()
+    val blockedUserIds by viewModel.blockedUserIds.collectAsState()
 
     // Back handling
     BackHandler(enabled = currentScreen !is Screen.Main && currentScreen !is Screen.Welcome) {
         if (!viewModel.navigateBack()) {
             // Top level back
         }
+    }
+
+    // Startup initialization for local database cache and Supabase persistent storage
+    LaunchedEffect(Unit) {
+        viewModel.initialize(context)
     }
 
     FadxTheme(darkTheme = isDark) {
@@ -105,7 +111,8 @@ fun FadxApp(
                         is Screen.Splash -> {
                             SplashScreen(
                                 onTimeout = {
-                                    if (isAuthenticated) {
+                                    val hasActiveSession = viewModel.checkActiveSession()
+                                    if (hasActiveSession || isAuthenticated) {
                                         viewModel.navigateTo(Screen.Main)
                                     } else {
                                         viewModel.navigateTo(Screen.Welcome)
@@ -184,6 +191,9 @@ fun FadxApp(
                                         onReportClick = { viewModel.openReportDialog("post", it.id, it.text.take(40)) },
                                         onDeleteClick = { viewModel.deletePost(it.id) },
                                         onAuthorClick = { viewModel.navigateTo(Screen.UserProfile(it.id)) },
+                                        onBlockAuthorClick = { userToBlock ->
+                                            viewModel.blockUser(userToBlock.id)
+                                        },
                                         modifier = Modifier.padding(padding)
                                     )
                                     1 -> VideosScreen(
@@ -202,6 +212,7 @@ fun FadxApp(
                                         notifications = notifications,
                                         onNotificationClick = { viewModel.showToast("Notification selected") },
                                         onMarkAllRead = { viewModel.markAllNotificationsRead() },
+                                        onTestPush = { viewModel.sendTestPushNotification() },
                                         modifier = Modifier.padding(padding)
                                     )
                                     4 -> MenuHubScreen(
@@ -224,7 +235,7 @@ fun FadxApp(
                         is Screen.Search -> {
                             SearchScreen(
                                 query = searchQuery,
-                                onQueryChange = { viewModel.searchQuery.value = it },
+                                onQueryChange = { viewModel.updateSearchQuery(it) },
                                 selectedCategory = searchCategory,
                                 onCategorySelect = { viewModel.searchCategory.value = it },
                                 searchResults = searchResults,
@@ -282,7 +293,11 @@ fun FadxApp(
                                 onShareClick = { activeSharePost = it },
                                 onSaveClick = { viewModel.toggleSavePost(it) },
                                 onReportClick = { viewModel.openReportDialog("profile", user.id, user.name) },
-                                onDeleteClick = { viewModel.deletePost(it.id) }
+                                onDeleteClick = { viewModel.deletePost(it.id) },
+                                onBlockUser = {
+                                    viewModel.blockUser(user.id)
+                                    viewModel.navigateBack()
+                                }
                             )
                         }
                         is Screen.EditProfile -> {
@@ -378,6 +393,10 @@ fun FadxApp(
                                 onToggle2FA = { viewModel.toggle2FA() },
                                 supabaseStatus = supabaseStatus,
                                 onTestSupabase = { viewModel.testSupabaseConnection() },
+                                onTestNotification = { viewModel.sendTestPushNotification() },
+                                blockedUserIds = blockedUserIds,
+                                onUnblockUser = { viewModel.unblockUser(it) },
+                                onDeleteAccount = { viewModel.deleteAccount() },
                                 onBackClick = { viewModel.navigateBack() }
                             )
                         }

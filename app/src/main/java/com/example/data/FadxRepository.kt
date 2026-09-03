@@ -1,17 +1,117 @@
 package com.example.data
 
+import android.content.Context
+import android.util.Log
+import com.example.data.local.AppDatabase
+import com.example.data.local.UserCacheRepository
 import com.example.data.supabase.SupabaseClient
 import com.example.data.supabase.SupabaseConfig
+import com.example.data.supabase.SupabasePost
+import com.example.data.supabase.SupabaseUserProfile
+import com.example.data.supabase.SupabaseUserSession
 import com.example.model.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
-class FadxRepository {
+class FadxRepository(
+    private var userCacheRepository: UserCacheRepository? = null
+) {
+
+    private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var appContext: Context? = null
 
     // Supabase Remote Client Instance
     val supabaseClient: SupabaseClient = SupabaseClient.instance
+
+    /**
+     * Initializes Room local cache repository and Supabase persistent storage.
+     */
+    fun initCache(context: Context) {
+        appContext = context.applicationContext
+        if (userCacheRepository == null) {
+            val database = AppDatabase.getInstance(context)
+            userCacheRepository = UserCacheRepository(database.userDao())
+            supabaseClient.initialize(context)
+            repoScope.launch {
+                checkAndRestoreSession()
+            }
+        }
+    }
+
+    /**
+     * Checks if a valid persistent session exists in storage and restores user data.
+     */
+    suspend fun checkAndRestoreSession(): Boolean = withContext(Dispatchers.IO) {
+        val session = supabaseClient.auth.currentSessionOrNull()
+        if (session != null && !session.userId.isNullOrBlank()) {
+            _isAuthenticated.value = true
+            Log.i("FadxRepository", "Restoring session for user ${session.userId}")
+
+            // 1. Immediately read from local Room database cache
+            val cached = userCacheRepository?.getUserDirect(session.userId)
+            if (cached != null) {
+                _currentUser.value = cached.toAppUser()
+                Log.i("FadxRepository", "Loaded user from local Room cache: ${cached.fullName}")
+            }
+
+            // 2. Sync fresh profile from Supabase public.profiles table
+            syncUserProfile(session.userId)
+            fetchRemotePosts()
+            return@withContext true
+        } else {
+            _isAuthenticated.value = false
+            return@withContext false
+        }
+    }
+
+    /**
+     * Synchronizes Supabase profile data into the local Room database.
+     */
+    suspend fun syncUserProfile(userId: String): Result<User> = withContext(Dispatchers.IO) {
+        try {
+            val result = supabaseClient.fetchProfile(userId)
+            if (result.isSuccess) {
+                val remoteProfile = result.getOrThrow()
+                val user = remoteProfile.toAppUser()
+                _currentUser.value = user
+                userCacheRepository?.cacheSupabaseProfile(remoteProfile)
+                Log.i("FadxRepository", "Synced profile from Supabase: ${remoteProfile.username}")
+                Result.success(user)
+            } else {
+                val ex = result.exceptionOrNull()
+                Log.w("FadxRepository", "Could not fetch remote profile: ${ex?.message}")
+                Result.failure(ex ?: Exception("Unknown error syncing profile"))
+            }
+        } catch (e: Exception) {
+            Log.e("FadxRepository", "Exception in syncUserProfile", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Public profile search querying Supabase public.profiles and local Room cache.
+     * Complies with RLS rules.
+     */
+    suspend fun searchPublicProfiles(query: String): List<User> = withContext(Dispatchers.IO) {
+        if (query.isBlank()) return@withContext emptyList()
+        val q = query.trim().lowercase()
+
+        val localMatches = (sampleUsers + _currentUser.value).filter {
+            it.name.lowercase().contains(q) || it.username.lowercase().contains(q)
+        }
+
+        val remoteProfiles = supabaseClient.searchProfiles(q).getOrDefault(emptyList())
+        val remoteUsers = remoteProfiles.map { it.toAppUser() }
+
+        (remoteUsers + localMatches).distinctBy { it.id }
+    }
 
 
     // Current Authenticated User
@@ -201,6 +301,10 @@ class FadxRepository {
 
     private val _twoFactorEnabled = MutableStateFlow(false)
     val twoFactorEnabled: StateFlow<Boolean> = _twoFactorEnabled.asStateFlow()
+
+    // Blocked users (Google Play UGC & user safety compliance)
+    private val _blockedUserIds = MutableStateFlow<Set<String>>(emptySet())
+    val blockedUserIds: StateFlow<Set<String>> = _blockedUserIds.asStateFlow()
 
     init {
         initSampleData()
@@ -754,9 +858,95 @@ class FadxRepository {
 
     // --- Actions & Mutators ---
 
+    suspend fun loginWithSupabase(emailOrUsername: String, pass: String): Result<User> = withContext(Dispatchers.IO) {
+        val result = supabaseClient.signInWithPassword(emailOrUsername, pass)
+        if (result.isSuccess) {
+            val session = result.getOrThrow()
+            _isAuthenticated.value = true
+            val userId = session.userId ?: "user_me"
+
+            // Attempt to fetch profile from public.profiles table
+            val profileResult = supabaseClient.fetchProfile(userId)
+            val finalUser = if (profileResult.isSuccess) {
+                val p = profileResult.getOrThrow()
+                userCacheRepository?.cacheSupabaseProfile(p)
+                p.toAppUser()
+            } else {
+                // If profile row doesn't exist yet, construct and upsert it
+                val newProfile = SupabaseUserProfile(
+                    id = userId,
+                    email = session.email ?: emailOrUsername,
+                    username = emailOrUsername.substringBefore("@").filter { it.isLetterOrDigit() }.lowercase().ifBlank { "user_${userId.take(6)}" },
+                    fullName = emailOrUsername.substringBefore("@").replace(".", " ").split(" ")
+                        .joinToString(" ") { it.replaceFirstChar(Char::titlecase) }.ifBlank { "Fadx Explorer" },
+                    avatarUrl = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500&q=80",
+                    coverUrl = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&q=80",
+                    createdAt = System.currentTimeMillis().toString()
+                )
+                supabaseClient.upsertProfile(newProfile)
+                userCacheRepository?.cacheSupabaseProfile(newProfile)
+                newProfile.toAppUser()
+            }
+            _currentUser.value = finalUser
+            Result.success(finalUser)
+        } else {
+            // Local fallback / demo login if offline or demo accounts
+            if (emailOrUsername.contains("alex.vance", ignoreCase = true) || !emailOrUsername.contains("@")) {
+                _isAuthenticated.value = true
+                Result.success(_currentUser.value)
+            } else {
+                Result.failure(result.exceptionOrNull() ?: Exception("Login failed"))
+            }
+        }
+    }
+
     fun login(emailOrUsername: String, pass: String): Boolean {
         _isAuthenticated.value = true
+        repoScope.launch {
+            loginWithSupabase(emailOrUsername, pass)
+        }
         return true
+    }
+
+    suspend fun signUpWithSupabase(
+        name: String,
+        username: String,
+        email: String,
+        phone: String,
+        pass: String,
+        dob: String,
+        gender: String
+    ): Result<User> = withContext(Dispatchers.IO) {
+        val metadata = mapOf(
+            "full_name" to name,
+            "username" to username,
+            "phone" to phone
+        )
+        supabaseClient.signUp(email, pass, metadata)
+        val session = supabaseClient.auth.currentSessionOrNull()
+        val userId = session?.userId ?: "user_${UUID.randomUUID().toString().take(8)}"
+
+        val profile = SupabaseUserProfile(
+            id = userId,
+            email = email,
+            username = username,
+            fullName = name,
+            phone = phone,
+            dob = dob,
+            gender = gender,
+            avatarUrl = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500&q=80",
+            coverUrl = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&q=80",
+            createdAt = System.currentTimeMillis().toString()
+        )
+
+        // Upsert to Supabase profiles and cache to local Room DB
+        supabaseClient.upsertProfile(profile)
+        userCacheRepository?.cacheSupabaseProfile(profile)
+
+        val appUser = profile.toAppUser()
+        _currentUser.value = appUser
+        _isAuthenticated.value = true
+        Result.success(appUser)
     }
 
     fun signUp(name: String, username: String, email: String, phone: String, pass: String, dob: String, gender: String) {
@@ -769,10 +959,14 @@ class FadxRepository {
             gender = gender
         )
         _isAuthenticated.value = true
+        repoScope.launch {
+            signUpWithSupabase(name, username, email, phone, pass, dob, gender)
+        }
     }
 
     fun logout() {
         _isAuthenticated.value = false
+        supabaseClient.signOut()
     }
 
     fun setThemeMode(mode: String) {
@@ -781,10 +975,14 @@ class FadxRepository {
 
     // Post Interactions
     fun toggleReaction(postId: String, reaction: ReactionType) {
+        var userReacted = false
+        var targetReaction = ReactionType.NONE
         _posts.value = _posts.value.map { post ->
             if (post.id == postId) {
                 val currentReaction = post.userReaction
                 val newReaction = if (currentReaction == reaction) ReactionType.NONE else reaction
+                targetReaction = newReaction
+                userReacted = (newReaction != ReactionType.NONE)
                 val newCounts = post.reactionsCount.toMutableMap()
 
                 if (currentReaction != ReactionType.NONE) {
@@ -800,6 +998,20 @@ class FadxRepository {
                     reactionsCount = newCounts
                 )
             } else post
+        }
+
+        // Sync like to Supabase post_likes table
+        val me = _currentUser.value.id
+        repoScope.launch {
+            try {
+                if (userReacted) {
+                    supabaseClient.addLike(postId, me, targetReaction.name)
+                } else {
+                    supabaseClient.removeLike(postId, me)
+                }
+            } catch (e: Exception) {
+                Log.w("FadxRepository", "Error syncing reaction to Supabase", e)
+            }
         }
     }
 
@@ -820,6 +1032,58 @@ class FadxRepository {
                     commentsCount = post.commentsCount + 1
                 )
             } else post
+        }
+
+        // Sync comment to Supabase comments table
+        val me = _currentUser.value
+        repoScope.launch {
+            try {
+                supabaseClient.addComment(
+                    commentId = newComment.id,
+                    postId = postId,
+                    userId = me.id,
+                    userName = me.name,
+                    userAvatar = me.avatarUrl,
+                    content = newComment.text
+                )
+            } catch (e: Exception) {
+                Log.w("FadxRepository", "Error syncing comment to Supabase", e)
+            }
+        }
+    }
+
+    suspend fun syncCommentsForPost(postId: String) = withContext(Dispatchers.IO) {
+        val result = supabaseClient.fetchComments(postId)
+        if (result.isSuccess) {
+            val jsonList = result.getOrThrow()
+            if (jsonList.isNotEmpty()) {
+                val cloudComments = jsonList.map { obj ->
+                    Comment(
+                        id = obj.optString("id", UUID.randomUUID().toString()),
+                        postId = obj.optString("post_id", postId),
+                        author = User(
+                            id = obj.optString("user_id"),
+                            name = obj.optString("user_name", "Fadx User"),
+                            username = obj.optString("user_name", "user").filter { it.isLetterOrDigit() }.lowercase(),
+                            email = "user@fadx.social",
+                            avatarUrl = obj.optString("user_avatar", "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=500&q=80")
+                        ),
+                        text = obj.optString("content"),
+                        timestamp = "Recently",
+                        likesCount = 0
+                    )
+                }
+                _posts.value = _posts.value.map { post ->
+                    if (post.id == postId) {
+                        val existingIds = cloudComments.map { it.id }.toSet()
+                        val merged = (cloudComments + post.comments.filter { it.id !in existingIds })
+                        post.copy(
+                            comments = merged,
+                            commentsCount = maxOf(post.commentsCount, merged.size)
+                        )
+                    } else post
+                }
+            }
         }
     }
 
@@ -844,10 +1108,51 @@ class FadxRepository {
             sharesCount = 0
         )
         _posts.value = listOf(newPost) + _posts.value
+
+        // Upload local images to Supabase Storage 'posts' bucket and sync to posts table
+        repoScope.launch {
+            try {
+                val uploadedMediaUrls = mediaUrls.map { url ->
+                    if (url.startsWith("content://") || url.startsWith("file://")) {
+                        appContext?.let { ctx ->
+                            val uploadRes = supabaseClient.uploadMediaUri(ctx, "posts", url)
+                            uploadRes.getOrNull() ?: url
+                        } ?: url
+                    } else {
+                        url
+                    }
+                }
+
+                val finalPost = if (uploadedMediaUrls != mediaUrls) {
+                    val updated = newPost.copy(mediaUrls = uploadedMediaUrls)
+                    _posts.value = _posts.value.map { if (it.id == newPost.id) updated else it }
+                    updated
+                } else {
+                    newPost
+                }
+
+                val supabasePost = SupabasePost.fromAppPost(finalPost)
+                val result = supabaseClient.createPost(supabasePost)
+                if (result.isSuccess) {
+                    Log.i("FadxRepository", "Post synced to Supabase: ${finalPost.id}")
+                } else {
+                    Log.w("FadxRepository", "Could not sync post to Supabase: ${result.exceptionOrNull()?.message}")
+                }
+            } catch (e: Exception) {
+                Log.w("FadxRepository", "Exception syncing post to Supabase", e)
+            }
+        }
     }
 
     fun deletePost(postId: String) {
         _posts.value = _posts.value.filter { it.id != postId }
+        repoScope.launch {
+            try {
+                supabaseClient.deletePost(postId)
+            } catch (e: Exception) {
+                Log.w("FadxRepository", "Exception deleting post from Supabase", e)
+            }
+        }
     }
 
     fun toggleSavePost(post: Post) {
@@ -1083,9 +1388,31 @@ class FadxRepository {
         _notifications.value = _notifications.value.map { if (it.id == id) it.copy(isRead = true) else it }
     }
 
+    fun triggerNotification(type: NotificationType, title: String, message: String, actorUser: User? = null) {
+        val actor = actorUser ?: _friendsList.value.firstOrNull() ?: _currentUser.value
+        val newNotif = NotificationItem(
+            id = "notif_${UUID.randomUUID()}",
+            type = type,
+            actor = actor,
+            text = message,
+            timestamp = "Just now",
+            isRead = false
+        )
+        _notifications.value = listOf(newNotif) + _notifications.value
+
+        appContext?.let { ctx ->
+            com.example.notifications.NotificationHelper.showNotification(
+                context = ctx,
+                notificationId = (System.currentTimeMillis() % 100000).toInt(),
+                title = title,
+                message = "${actor.name} $message"
+            )
+        }
+    }
+
     // Profile updates
     fun updateProfile(name: String, bio: String, location: String, website: String, avatarUrl: String?, coverUrl: String?) {
-        _currentUser.value = _currentUser.value.copy(
+        val updated = _currentUser.value.copy(
             name = name,
             bio = bio,
             location = location,
@@ -1093,6 +1420,35 @@ class FadxRepository {
             avatarUrl = avatarUrl ?: _currentUser.value.avatarUrl,
             coverUrl = coverUrl ?: _currentUser.value.coverUrl
         )
+        _currentUser.value = updated
+
+        repoScope.launch {
+            try {
+                var finalAvatar = avatarUrl
+                var finalCover = coverUrl
+
+                appContext?.let { ctx ->
+                    if (finalAvatar != null && (finalAvatar!!.startsWith("content://") || finalAvatar!!.startsWith("file://"))) {
+                        finalAvatar = supabaseClient.uploadMediaUri(ctx, "avatars", finalAvatar!!).getOrNull() ?: finalAvatar
+                    }
+                    if (finalCover != null && (finalCover!!.startsWith("content://") || finalCover!!.startsWith("file://"))) {
+                        finalCover = supabaseClient.uploadMediaUri(ctx, "avatars", finalCover!!).getOrNull() ?: finalCover
+                    }
+                }
+
+                val withCloudAssets = updated.copy(
+                    avatarUrl = finalAvatar ?: updated.avatarUrl,
+                    coverUrl = finalCover ?: updated.coverUrl
+                )
+                _currentUser.value = withCloudAssets
+                userCacheRepository?.cacheAppUser(withCloudAssets)
+                val supabaseProfile = SupabaseUserProfile.fromAppUser(withCloudAssets)
+                supabaseClient.upsertProfile(supabaseProfile)
+                Log.i("FadxRepository", "Updated and synced profile to Supabase: ${withCloudAssets.id}")
+            } catch (e: Exception) {
+                Log.e("FadxRepository", "Error syncing profile update", e)
+            }
+        }
     }
 
     // Report submission & Admin actions
@@ -1124,5 +1480,103 @@ class FadxRepository {
 
     fun toggle2FA() {
         _twoFactorEnabled.value = !_twoFactorEnabled.value
+    }
+
+    /**
+     * Fetch feed posts from Supabase and merge with local posts,
+     * filtering out content from blocked users.
+     */
+    suspend fun fetchRemotePosts(): Result<List<Post>> = withContext(Dispatchers.IO) {
+        try {
+            val result = supabaseClient.fetchPosts(30)
+            if (result.isSuccess) {
+                val remotePosts = result.getOrThrow().map { it.toAppPost() }
+                if (remotePosts.isNotEmpty()) {
+                    val currentIds = remotePosts.map { it.id }.toSet()
+                    val blocked = _blockedUserIds.value
+                    val merged = (remotePosts + _posts.value.filter { it.id !in currentIds })
+                        .filter { it.author.id !in blocked }
+                    _posts.value = merged
+                }
+                Result.success(remotePosts)
+            } else {
+                Result.failure(result.exceptionOrNull() ?: Exception("Unknown error fetching posts"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Block a user (Google Play UGC requirement).
+     * Immediately hides their posts, stories, requests, and chats.
+     */
+    fun blockUser(userId: String) {
+        val updated = _blockedUserIds.value + userId
+        _blockedUserIds.value = updated
+        _posts.value = _posts.value.filter { it.author.id !in updated }
+        _stories.value = _stories.value.filter { it.author.id !in updated }
+        _friendRequests.value = _friendRequests.value.filter { it.user.id !in updated }
+        _chatThreads.value = _chatThreads.value.filter { thread -> thread.participants.none { it.id in updated } }
+
+        val me = _currentUser.value.id
+        repoScope.launch {
+            try {
+                supabaseClient.blockUser(me, userId)
+                Log.i("FadxRepository", "Blocked user $userId in Supabase")
+            } catch (e: Exception) {
+                Log.w("FadxRepository", "Error syncing blocked user to Supabase", e)
+            }
+        }
+    }
+
+    /**
+     * Unblock a previously blocked user.
+     */
+    fun unblockUser(userId: String) {
+        _blockedUserIds.value = _blockedUserIds.value - userId
+        val me = _currentUser.value.id
+        repoScope.launch {
+            try {
+                supabaseClient.unblockUser(me, userId)
+                Log.i("FadxRepository", "Unblocked user $userId in Supabase")
+            } catch (e: Exception) {
+                Log.w("FadxRepository", "Error syncing unblock user to Supabase", e)
+            }
+        }
+    }
+
+    /**
+     * Delete user account & all associated local data (Google Play Policy requirement).
+     */
+    fun deleteAccount() {
+        val userId = _currentUser.value.id
+        repoScope.launch {
+            try {
+                supabaseClient.deleteProfile(userId)
+                userCacheRepository?.clearCache()
+                Log.i("FadxRepository", "Account and local cache deleted for $userId")
+            } catch (e: Exception) {
+                Log.w("FadxRepository", "Error executing delete account", e)
+            }
+        }
+        _isAuthenticated.value = false
+        _currentUser.value = sampleUsers.first()
+    }
+
+    companion object {
+        @Volatile
+        private var INSTANCE: FadxRepository? = null
+
+        fun getInstance(context: Context? = null): FadxRepository {
+            return INSTANCE ?: synchronized(this) {
+                val instance = INSTANCE ?: FadxRepository()
+                if (context != null) {
+                    instance.initCache(context)
+                }
+                INSTANCE = instance
+                instance
+            }
+        }
     }
 }

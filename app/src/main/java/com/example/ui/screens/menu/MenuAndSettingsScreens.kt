@@ -40,6 +40,7 @@ fun NotificationsScreen(
     notifications: List<NotificationItem>,
     onNotificationClick: (NotificationItem) -> Unit,
     onMarkAllRead: () -> Unit,
+    onTestPush: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -52,6 +53,13 @@ fun NotificationsScreen(
                 Text("Notifications", fontWeight = FontWeight.Bold, fontSize = 20.sp)
             },
             actions = {
+                IconButton(onClick = onTestPush) {
+                    Icon(
+                        imageVector = Icons.Default.NotificationsActive,
+                        contentDescription = "Test Push Notification",
+                        tint = FadxPrimary
+                    )
+                }
                 TextButton(onClick = onMarkAllRead) {
                     Text("Mark all read", color = FadxPrimary, fontWeight = FontWeight.Bold)
                 }
@@ -318,8 +326,96 @@ fun SettingsScreen(
     onToggle2FA: () -> Unit,
     supabaseStatus: SupabaseConnectionStatus = SupabaseConnectionStatus.IDLE,
     onTestSupabase: () -> Unit = {},
+    onTestNotification: () -> Unit = {},
+    blockedUserIds: Set<String> = emptySet(),
+    onUnblockUser: (String) -> Unit = {},
+    onDeleteAccount: () -> Unit = {},
     onBackClick: () -> Unit
 ) {
+    var showDeleteAccountDialog by remember { mutableStateOf(false) }
+    var showBlockedUsersDialog by remember { mutableStateOf(false) }
+
+    if (showDeleteAccountDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteAccountDialog = false },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = FadxAccentCoral,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Delete Account Permanently?",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            },
+            text = {
+                Text(
+                    text = "This action is permanent and cannot be undone. In accordance with Google Play data policy, all your profile data, posts, photos, friend connections, and chat messages will be permanently deleted from our servers.",
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteAccountDialog = false
+                        onDeleteAccount()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = FadxAccentCoral),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.testTag("confirm_delete_account_button")
+                ) {
+                    Text("Delete Everything", fontWeight = FontWeight.Bold, color = Color.White)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showDeleteAccountDialog = false },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showBlockedUsersDialog) {
+        AlertDialog(
+            onDismissRequest = { showBlockedUsersDialog = false },
+            title = { Text("Blocked Users (${blockedUserIds.size})", fontWeight = FontWeight.Bold) },
+            text = {
+                if (blockedUserIds.isEmpty()) {
+                    Text("You have not blocked any users. When you block someone, they cannot see your posts or message you.")
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        blockedUserIds.forEach { userId ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("User ID: ${userId.take(8)}...", fontSize = 14.sp)
+                                TextButton(onClick = { onUnblockUser(userId) }) {
+                                    Text("Unblock", color = FadxPrimary, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showBlockedUsersDialog = false }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -478,6 +574,43 @@ fun SettingsScreen(
                 }
             }
 
+            // Push Notifications & Alerts
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = FadxPrimary)
+                            Text("Push Notifications & Alerts", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        }
+
+                        Text(
+                            text = "Receive instant alerts for likes, comments, friend requests, and direct chat messages.",
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        OutlinedButton(
+                            onClick = onTestNotification,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Notifications, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Send Test Push Notification", fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+
             // Privacy Defaults
             item {
                 Card(
@@ -490,6 +623,82 @@ fun SettingsScreen(
                         Text("• Who can send friend requests: Everyone", fontSize = 13.sp)
                         Text("• Profile search visibility: Enabled", fontSize = 13.sp)
                         Text("• Active Online Status: Visible to friends", fontSize = 13.sp)
+                    }
+                }
+            }
+
+            // Safety & Blocked Users (Google Play UGC compliance)
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text("Safety & Interactions", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text("Blocked Accounts", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                Text("${blockedUserIds.size} users currently blocked", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+
+                            OutlinedButton(
+                                onClick = { showBlockedUsersDialog = true },
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Manage")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Danger Zone - Account Deletion (Google Play Data Policy compliance)
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = FadxAccentCoral.copy(alpha = 0.08f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.DeleteForever, contentDescription = null, tint = FadxAccentCoral)
+                            Text("Account Deletion", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = FadxAccentCoral)
+                        }
+
+                        Text(
+                            text = "Permanently remove your Fadx profile, posts, messages, and all data from our cloud servers. This fulfills Google Play data deletion compliance.",
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 18.sp
+                        )
+
+                        Button(
+                            onClick = { showDeleteAccountDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = FadxAccentCoral),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("delete_account_button")
+                        ) {
+                            Icon(Icons.Default.DeleteForever, contentDescription = null, tint = Color.White)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Delete Account Permanently", fontWeight = FontWeight.Bold, color = Color.White)
+                        }
                     }
                 }
             }

@@ -37,6 +37,7 @@ fun PostCard(
     onReportClick: () -> Unit,
     onDeleteClick: () -> Unit,
     onAuthorClick: (User) -> Unit,
+    onBlockAuthorClick: ((User) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
@@ -166,6 +167,23 @@ fun PostCard(
                                 )
                             }
                         )
+
+                        if (post.author.id != currentUserId && onBlockAuthorClick != null) {
+                            DropdownMenuItem(
+                                text = { Text("Block @${post.author.username}", color = FadxAccentCoral) },
+                                onClick = {
+                                    showOptionsMenu = false
+                                    onBlockAuthorClick(post.author)
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Block,
+                                        contentDescription = null,
+                                        tint = FadxAccentCoral
+                                    )
+                                }
+                            )
+                        }
 
                         if (post.author.id == currentUserId) {
                             HorizontalDivider()

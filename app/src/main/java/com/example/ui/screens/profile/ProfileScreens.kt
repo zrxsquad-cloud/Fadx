@@ -1,5 +1,8 @@
 package com.example.ui.screens.profile
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -60,6 +63,7 @@ fun ProfileScreen(
     onSaveClick: (Post) -> Unit,
     onReportClick: (Post) -> Unit,
     onDeleteClick: (Post) -> Unit,
+    onBlockUser: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableIntStateOf(0) } // 0: Posts, 1: Photos, 2: About
@@ -117,6 +121,69 @@ fun ProfileScreen(
                                 .background(Color.Black.copy(alpha = 0.5f))
                         ) {
                             Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
+                        }
+                    } else {
+                        var showUserMenu by remember { mutableStateOf(false) }
+                        var showConfirmBlockDialog by remember { mutableStateOf(false) }
+
+                        if (showConfirmBlockDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showConfirmBlockDialog = false },
+                                title = { Text("Block ${user.name}?", fontWeight = FontWeight.Bold) },
+                                text = { Text("They will no longer be able to see your posts, send messages, or find your profile on Fadx.") },
+                                confirmButton = {
+                                    Button(
+                                        onClick = {
+                                            showConfirmBlockDialog = false
+                                            onBlockUser?.invoke()
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = FadxAccentCoral)
+                                    ) {
+                                        Text("Block User", color = Color.White)
+                                    }
+                                },
+                                dismissButton = {
+                                    OutlinedButton(onClick = { showConfirmBlockDialog = false }) {
+                                        Text("Cancel")
+                                    }
+                                }
+                            )
+                        }
+
+                        Box {
+                            IconButton(
+                                onClick = { showUserMenu = true },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.5f))
+                            ) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "User Options", tint = Color.White)
+                            }
+
+                            DropdownMenu(
+                                expanded = showUserMenu,
+                                onDismissRequest = { showUserMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Report Profile") },
+                                    onClick = {
+                                        showUserMenu = false
+                                        onReportClick(userPosts.firstOrNull() ?: Post(id = "user_${user.id}", author = user, timestamp = "", text = user.name))
+                                    },
+                                    leadingIcon = { Icon(Icons.Outlined.Report, contentDescription = null, tint = FadxAccentCoral) }
+                                )
+                                if (onBlockUser != null) {
+                                    DropdownMenuItem(
+                                        text = { Text("Block User", color = FadxAccentCoral) },
+                                        onClick = {
+                                            showUserMenu = false
+                                            showConfirmBlockDialog = true
+                                        },
+                                        leadingIcon = { Icon(Icons.Default.Block, contentDescription = null, tint = FadxAccentCoral) }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -444,6 +511,14 @@ fun EditProfileScreen(
     var avatarUrl by remember { mutableStateOf(currentUser.avatarUrl) }
     var coverUrl by remember { mutableStateOf(currentUser.coverUrl) }
 
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            avatarUrl = uri.toString()
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -486,8 +561,9 @@ fun EditProfileScreen(
 
                 IconButton(
                     onClick = {
-                        // Toggle sample avatar presets
-                        avatarUrl = "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=500&q=80"
+                        photoPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
                     },
                     modifier = Modifier
                         .size(32.dp)

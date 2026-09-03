@@ -43,6 +43,7 @@ fun HomeScreen(
     onReportClick: (Post) -> Unit,
     onDeleteClick: (Post) -> Unit,
     onAuthorClick: (User) -> Unit,
+    onBlockAuthorClick: ((User) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -174,7 +175,8 @@ fun HomeScreen(
                 onSaveClick = { onSaveClick(post) },
                 onReportClick = { onReportClick(post) },
                 onDeleteClick = { onDeleteClick(post) },
-                onAuthorClick = onAuthorClick
+                onAuthorClick = onAuthorClick,
+                onBlockAuthorClick = onBlockAuthorClick
             )
         }
     }

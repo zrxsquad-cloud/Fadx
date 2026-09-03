@@ -1,5 +1,8 @@
 package com.example.ui.screens.home
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -45,6 +48,14 @@ fun CreatePostScreen(
     var showLocationField by remember { mutableStateOf(false) }
     var attachedImages by remember { mutableStateOf<List<String>>(emptyList()) }
     var showVisibilityMenu by remember { mutableStateOf(false) }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 5)
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            attachedImages = (attachedImages + uris.map { it.toString() }).distinct()
+        }
+    }
 
     val sampleMediaPresets = listOf(
         "https://images.unsplash.com/photo-1518770660439-4636190af475?w=1000&q=80",
@@ -334,8 +345,9 @@ fun CreatePostScreen(
                     ) {
                         IconButton(
                             onClick = {
-                                val nextPreset = sampleMediaPresets.firstOrNull { it !in attachedImages } ?: sampleMediaPresets.first()
-                                attachedImages = attachedImages + nextPreset
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
                             }
                         ) {
                             Icon(
