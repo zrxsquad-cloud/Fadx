@@ -86,6 +86,8 @@ class FadxViewModel(
     val currentUser = repository.currentUser
     val isAuthenticated = repository.isAuthenticated
     val themeMode = repository.themeMode
+    val authError = MutableStateFlow<String?>(null)
+    val isAuthLoading = MutableStateFlow(false)
     val stories = repository.stories
     val posts = repository.posts
     val videos = repository.videos
@@ -226,33 +228,69 @@ class FadxViewModel(
         _toastMessage.value = null
     }
 
-    // Auth flows
-    fun login(identifier: String, pass: String) {
+    // Auth flows with Supabase Backend (with Firebase support)
+    fun login(identifier: String, pass: String, onFinished: (Boolean, String?) -> Unit = { _, _ -> }) {
+        authError.value = null
+        isAuthLoading.value = true
         viewModelScope.launch {
             val result = repository.loginWithSupabase(identifier, pass)
+            isAuthLoading.value = false
             if (result.isSuccess) {
+                authError.value = null
                 _currentScreen.value = Screen.Main
                 showToast("Welcome back to Fadx!")
+                onFinished(true, null)
             } else {
-                repository.login(identifier, pass)
-                _currentScreen.value = Screen.Main
-                showToast("Welcome back to Fadx!")
+                val err = result.exceptionOrNull()?.message ?: "Login failed. Please check your credentials."
+                authError.value = err
+                onFinished(false, err)
             }
         }
     }
 
-    fun signUp(name: String, username: String, email: String, phone: String, pass: String, dob: String, gender: String) {
+    fun signUp(
+        name: String,
+        username: String,
+        email: String,
+        phone: String,
+        pass: String,
+        dob: String,
+        gender: String,
+        onFinished: (Boolean, String?) -> Unit = { _, _ -> }
+    ) {
+        authError.value = null
+        isAuthLoading.value = true
         viewModelScope.launch {
             val result = repository.signUpWithSupabase(name, username, email, phone, pass, dob, gender)
+            isAuthLoading.value = false
             if (result.isSuccess) {
+                authError.value = null
                 _currentScreen.value = Screen.Main
-                showToast("Account created successfully!")
+                showToast("Account created successfully with Supabase!")
+                onFinished(true, null)
             } else {
-                repository.signUp(name, username, email, phone, pass, dob, gender)
-                _currentScreen.value = Screen.Main
-                showToast("Account created successfully!")
+                val err = result.exceptionOrNull()?.message ?: "Registration failed. Please check your information."
+                authError.value = err
+                onFinished(false, err)
             }
         }
+    }
+
+    fun sendPasswordReset(email: String, onFinished: (Boolean, String?) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val result = repository.sendPasswordReset(email)
+            if (result.isSuccess) {
+                showToast("Password reset instructions sent to your email.")
+                onFinished(true, null)
+            } else {
+                val err = result.exceptionOrNull()?.message ?: "Could not send reset instructions."
+                onFinished(false, err)
+            }
+        }
+    }
+
+    fun clearAuthError() {
+        authError.value = null
     }
 
     fun logout() {
@@ -359,13 +397,75 @@ class FadxViewModel(
         showToast("All notifications marked as read")
     }
 
-    fun sendTestPushNotification() {
+    fun sharePost(post: Post, friend: User) {
+        repository.sharePost(post, friend)
+        showToast("Post shared with ${friend.name} ↗️")
+    }
+
+    fun sharePostExternal(post: Post) {
+        repository.sharePostExternal(post)
+        showToast("Post shared to your feed ↗️")
+    }
+
+    fun sendTestPushNotification(type: NotificationType = NotificationType.LIKE) {
+        when (type) {
+            NotificationType.LIKE -> triggerLikeNotification()
+            NotificationType.COMMENT -> triggerCommentNotification()
+            NotificationType.SHARE -> triggerShareNotification()
+            NotificationType.MESSAGE -> triggerMessageNotification()
+            else -> {
+                repository.triggerNotification(
+                    type = type,
+                    title = "Fadx Social",
+                    message = "sent you a notification"
+                )
+                showToast("Push notification dispatched! 🔔")
+            }
+        }
+    }
+
+    fun triggerLikeNotification() {
+        val friend = repository.friendsList.value.firstOrNull()
         repository.triggerNotification(
             type = NotificationType.LIKE,
-            title = "Fadx Social",
-            message = "liked your recent photo: 'Golden Hour Vibes ✨'"
+            title = "❤️ New Like",
+            message = "liked your recent photo: 'Golden Hour Vibes ✨'",
+            actorUser = friend
         )
-        showToast("Push notification dispatched! Check your status bar 🔔")
+        showToast("Like notification dispatched! 🔔")
+    }
+
+    fun triggerCommentNotification() {
+        val friend = repository.friendsList.value.getOrNull(1) ?: repository.friendsList.value.firstOrNull()
+        repository.triggerNotification(
+            type = NotificationType.COMMENT,
+            title = "💬 New Comment",
+            message = "commented on your photo: 'Amazing capture! Keep it up 🔥'",
+            actorUser = friend
+        )
+        showToast("Comment notification dispatched! 💬")
+    }
+
+    fun triggerShareNotification() {
+        val friend = repository.friendsList.value.getOrNull(2) ?: repository.friendsList.value.firstOrNull()
+        repository.triggerNotification(
+            type = NotificationType.SHARE,
+            title = "↗️ Post Shared",
+            message = "shared your post to 'Tech Explorers' community",
+            actorUser = friend
+        )
+        showToast("Share notification dispatched! ↗️")
+    }
+
+    fun triggerMessageNotification() {
+        val friend = repository.friendsList.value.firstOrNull()
+        repository.triggerNotification(
+            type = NotificationType.MESSAGE,
+            title = "✉️ New Message",
+            message = "Hey! Are you free for a quick chat? ☕",
+            actorUser = friend
+        )
+        showToast("Message notification dispatched! ✉️")
     }
 
     fun updateProfile(name: String, bio: String, location: String, website: String, avatar: String?, cover: String?) {
@@ -398,6 +498,10 @@ class FadxViewModel(
     fun toggle2FA() {
         repository.toggle2FA()
         showToast("Two-Factor Authentication toggled")
+    }
+
+    fun toggleNotificationSetting(key: String) {
+        repository.toggleNotificationSetting(key)
     }
 
     // Blocked users & Account deletion compliance

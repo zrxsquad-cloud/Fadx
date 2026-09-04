@@ -392,6 +392,34 @@ class SupabaseClient private constructor() {
         }
 
         /**
+         * Sends a password reset email via Supabase Auth (/auth/v1/recover).
+         */
+        suspend fun sendPasswordResetEmail(email: String): Result<Boolean> = withContext(Dispatchers.IO) {
+            try {
+                val json = JSONObject().apply {
+                    put("email", email.trim())
+                }
+                val request = Request.Builder()
+                    .url("${SupabaseConfig.authUrl}/recover")
+                    .post(json.toString().toRequestBody(jsonMediaType))
+                    .build()
+
+                okHttpClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        Result.success(true)
+                    } else {
+                        val body = response.body?.string().orEmpty()
+                        val errorJson = try { JSONObject(body) } catch (_: Exception) { null }
+                        val msg = errorJson?.optString("msg") ?: errorJson?.optString("error_description") ?: "Password reset failed"
+                        Result.failure(Exception(msg))
+                    }
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
+        /**
          * Signs out current user and clears persistent session storage.
          */
         fun signOut() {

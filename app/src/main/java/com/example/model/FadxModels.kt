@@ -44,7 +44,7 @@ enum class PageCategory(val label: String) {
 }
 
 enum class NotificationType {
-    LIKE, REACTION, COMMENT, REPLY, FRIEND_REQUEST, FRIEND_ACCEPT, NEW_FOLLOWER, MESSAGE, GROUP_ACTIVITY, MENTION
+    LIKE, REACTION, COMMENT, REPLY, SHARE, FRIEND_REQUEST, FRIEND_ACCEPT, NEW_FOLLOWER, MESSAGE, GROUP_ACTIVITY, MENTION
 }
 
 enum class ReportReason(val label: String) {

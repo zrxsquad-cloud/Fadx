@@ -72,6 +72,7 @@ object NotificationHelper {
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
 
@@ -81,5 +82,45 @@ object NotificationHelper {
         } catch (e: SecurityException) {
             // Permission not granted yet on Android 13+
         }
+    }
+
+    fun showLikeNotification(context: Context, actorName: String, postSnippet: String) {
+        showNotification(
+            context = context,
+            notificationId = 1001 + (System.currentTimeMillis() % 1000).toInt(),
+            title = "❤️ New Like",
+            message = "$actorName liked your post: \"$postSnippet\"",
+            channelId = CHANNEL_ID_INTERACTIONS
+        )
+    }
+
+    fun showCommentNotification(context: Context, actorName: String, commentText: String, postSnippet: String) {
+        showNotification(
+            context = context,
+            notificationId = 2001 + (System.currentTimeMillis() % 1000).toInt(),
+            title = "💬 New Comment",
+            message = "$actorName commented on \"$postSnippet\": \"$commentText\"",
+            channelId = CHANNEL_ID_INTERACTIONS
+        )
+    }
+
+    fun showShareNotification(context: Context, actorName: String, postSnippet: String) {
+        showNotification(
+            context = context,
+            notificationId = 3001 + (System.currentTimeMillis() % 1000).toInt(),
+            title = "↗️ Post Shared",
+            message = "$actorName shared your post: \"$postSnippet\"",
+            channelId = CHANNEL_ID_INTERACTIONS
+        )
+    }
+
+    fun showMessageNotification(context: Context, senderName: String, messageText: String) {
+        showNotification(
+            context = context,
+            notificationId = 4001 + (System.currentTimeMillis() % 1000).toInt(),
+            title = "✉️ New Message from $senderName",
+            message = messageText,
+            channelId = CHANNEL_ID_MESSAGES
+        )
     }
 }

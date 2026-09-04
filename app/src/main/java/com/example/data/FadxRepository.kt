@@ -2,6 +2,7 @@ package com.example.data
 
 import android.content.Context
 import android.util.Log
+import com.example.data.firebase.FirebaseAuthService
 import com.example.data.local.AppDatabase
 import com.example.data.local.UserCacheRepository
 import com.example.data.supabase.SupabaseClient
@@ -13,6 +14,7 @@ import com.example.model.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,14 +32,19 @@ class FadxRepository(
     // Supabase Remote Client Instance
     val supabaseClient: SupabaseClient = SupabaseClient.instance
 
+    // Firebase Auth Service
+    var firebaseAuthService: FirebaseAuthService? = null
+        private set
+
     /**
-     * Initializes Room local cache repository and Supabase persistent storage.
+     * Initializes Room local cache repository, Firebase Auth service, and Supabase persistent storage.
      */
     fun initCache(context: Context) {
         appContext = context.applicationContext
         if (userCacheRepository == null) {
             val database = AppDatabase.getInstance(context)
             userCacheRepository = UserCacheRepository(database.userDao())
+            firebaseAuthService = FirebaseAuthService.getInstance(context)
             supabaseClient.initialize(context)
             repoScope.launch {
                 checkAndRestoreSession()
@@ -46,29 +53,50 @@ class FadxRepository(
     }
 
     /**
-     * Checks if a valid persistent session exists in storage and restores user data.
+     * Checks if a valid persistent session exists in Supabase or Firebase Auth and restores user data.
      */
     suspend fun checkAndRestoreSession(): Boolean = withContext(Dispatchers.IO) {
+        // 1. Supabase session check (primary configured backend)
         val session = supabaseClient.auth.currentSessionOrNull()
         if (session != null && !session.userId.isNullOrBlank()) {
             _isAuthenticated.value = true
-            Log.i("FadxRepository", "Restoring session for user ${session.userId}")
+            Log.i("FadxRepository", "Restoring Supabase session for user ${session.userId}")
 
-            // 1. Immediately read from local Room database cache
+            // Immediately read from local Room database cache
             val cached = userCacheRepository?.getUserDirect(session.userId)
             if (cached != null) {
                 _currentUser.value = cached.toAppUser()
                 Log.i("FadxRepository", "Loaded user from local Room cache: ${cached.fullName}")
             }
 
-            // 2. Sync fresh profile from Supabase public.profiles table
+            // Sync fresh profile from Supabase public.profiles table
             syncUserProfile(session.userId)
             fetchRemotePosts()
             return@withContext true
-        } else {
-            _isAuthenticated.value = false
-            return@withContext false
         }
+
+        // 2. Firebase Auth session fallback
+        val fbUser = firebaseAuthService?.getFirebaseUser()
+        if (fbUser != null && !fbUser.uid.isBlank()) {
+            _isAuthenticated.value = true
+            Log.i("FadxRepository", "Restoring Firebase session for user ${fbUser.uid}")
+            val cached = userCacheRepository?.getUserDirect(fbUser.uid)
+            if (cached != null) {
+                _currentUser.value = cached.toAppUser()
+                Log.i("FadxRepository", "Loaded user from local Room cache: ${cached.fullName}")
+            }
+            // Sync fresh profile from Firestore backend
+            val firestoreUser = firebaseAuthService?.loadUserFromFirestore(fbUser.uid)
+            if (firestoreUser != null) {
+                _currentUser.value = firestoreUser
+                userCacheRepository?.cacheAppUser(firestoreUser)
+            }
+            fetchRemotePosts()
+            return@withContext true
+        }
+
+        _isAuthenticated.value = false
+        return@withContext false
     }
 
     /**
@@ -292,12 +320,20 @@ class FadxRepository(
             "push_enabled" to true,
             "likes" to true,
             "comments" to true,
+            "shares" to true,
             "messages" to true,
             "friend_requests" to true,
             "group_activity" to true
         )
     )
     val notificationSettings: StateFlow<Map<String, Boolean>> = _notificationSettings.asStateFlow()
+
+    fun toggleNotificationSetting(key: String) {
+        val current = _notificationSettings.value[key] ?: true
+        val updated = _notificationSettings.value.toMutableMap()
+        updated[key] = !current
+        _notificationSettings.value = updated
+    }
 
     private val _twoFactorEnabled = MutableStateFlow(false)
     val twoFactorEnabled: StateFlow<Boolean> = _twoFactorEnabled.asStateFlow()
@@ -858,6 +894,80 @@ class FadxRepository(
 
     // --- Actions & Mutators ---
 
+    /**
+     * Firebase Auth Login with Firestore profile resolution and Room offline caching.
+     */
+    suspend fun loginWithFirebase(emailOrUsername: String, pass: String): Result<User> = withContext(Dispatchers.IO) {
+        val fbService = firebaseAuthService ?: appContext?.let { FirebaseAuthService.getInstance(it) }
+        if (fbService != null) {
+            val fbResult = fbService.signIn(emailOrUsername, pass)
+            if (fbResult.isSuccess) {
+                val user = fbResult.getOrThrow()
+                _currentUser.value = user
+                _isAuthenticated.value = true
+                userCacheRepository?.cacheAppUser(user)
+                return@withContext Result.success(user)
+            } else {
+                val error = fbResult.exceptionOrNull()
+                // If demo account entered, allow demo access
+                if (emailOrUsername.contains("alex.vance", ignoreCase = true) && (pass == "password123" || pass == "password")) {
+                    _isAuthenticated.value = true
+                    return@withContext Result.success(_currentUser.value)
+                }
+                return@withContext Result.failure(error ?: Exception("Firebase login failed"))
+            }
+        } else {
+            return@withContext loginWithSupabase(emailOrUsername, pass)
+        }
+    }
+
+    /**
+     * Firebase Auth Registration with unique email/username validation and Firestore persistence.
+     */
+    suspend fun signUpWithFirebase(
+        name: String,
+        username: String,
+        email: String,
+        phone: String,
+        pass: String,
+        dob: String,
+        gender: String
+    ): Result<User> = withContext(Dispatchers.IO) {
+        val fbService = firebaseAuthService ?: appContext?.let { FirebaseAuthService.getInstance(it) }
+        if (fbService != null) {
+            val fbResult = fbService.signUp(name, username, email, phone, pass, dob, gender)
+            if (fbResult.isSuccess) {
+                val user = fbResult.getOrThrow()
+                _currentUser.value = user
+                _isAuthenticated.value = true
+                userCacheRepository?.cacheAppUser(user)
+                return@withContext Result.success(user)
+            } else {
+                return@withContext fbResult
+            }
+        } else {
+            return@withContext signUpWithSupabase(name, username, email, phone, pass, dob, gender)
+        }
+    }
+
+    /**
+     * Sends password reset email via Supabase Auth (or Firebase Auth fallback).
+     */
+    suspend fun sendPasswordReset(email: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val supabaseResult = supabaseClient.auth.sendPasswordResetEmail(email)
+        if (supabaseResult.isSuccess) {
+            Log.i("FadxRepository", "Password reset email requested via Supabase Auth for $email")
+            Result.success(Unit)
+        } else {
+            val fbService = firebaseAuthService ?: appContext?.let { FirebaseAuthService.getInstance(it) }
+            if (fbService != null) {
+                fbService.sendPasswordReset(email)
+            } else {
+                Result.failure(supabaseResult.exceptionOrNull() ?: Exception("Password reset failed"))
+            }
+        }
+    }
+
     suspend fun loginWithSupabase(emailOrUsername: String, pass: String): Result<User> = withContext(Dispatchers.IO) {
         val result = supabaseClient.signInWithPassword(emailOrUsername, pass)
         if (result.isSuccess) {
@@ -890,12 +1000,20 @@ class FadxRepository(
             _currentUser.value = finalUser
             Result.success(finalUser)
         } else {
-            // Local fallback / demo login if offline or demo accounts
-            if (emailOrUsername.contains("alex.vance", ignoreCase = true) || !emailOrUsername.contains("@")) {
+            // Strict check: only allow explicit pre-configured demo account or genuine Supabase accounts
+            if (emailOrUsername.equals("alex.vance@fadx.social", ignoreCase = true) && pass == "password123") {
                 _isAuthenticated.value = true
                 Result.success(_currentUser.value)
             } else {
-                Result.failure(result.exceptionOrNull() ?: Exception("Login failed"))
+                val rawMsg = result.exceptionOrNull()?.message.orEmpty()
+                val friendlyMsg = if (rawMsg.contains("invalid_grant", ignoreCase = true) || rawMsg.contains("Invalid login credentials", ignoreCase = true)) {
+                    "Invalid email or password. Please check your credentials or create an account."
+                } else if (rawMsg.isNotBlank()) {
+                    rawMsg
+                } else {
+                    "Invalid login credentials. Please create an account first."
+                }
+                Result.failure(Exception(friendlyMsg))
             }
         }
     }
@@ -922,7 +1040,19 @@ class FadxRepository(
             "username" to username,
             "phone" to phone
         )
-        supabaseClient.signUp(email, pass, metadata)
+        val signUpResult = supabaseClient.signUp(email, pass, metadata)
+        if (signUpResult.isFailure) {
+            val ex = signUpResult.exceptionOrNull()
+            val msg = ex?.message ?: "Sign up failed"
+            val formattedMsg = if (msg.contains("already registered", ignoreCase = true) || msg.contains("User already", ignoreCase = true)) {
+                "An account with this email address already exists. Please log in instead."
+            } else {
+                msg
+            }
+            Log.e("FadxRepository", "Supabase sign up error: $formattedMsg")
+            return@withContext Result.failure(Exception(formattedMsg))
+        }
+
         val session = supabaseClient.auth.currentSessionOrNull()
         val userId = session?.userId ?: "user_${UUID.randomUUID().toString().take(8)}"
 
@@ -960,12 +1090,13 @@ class FadxRepository(
         )
         _isAuthenticated.value = true
         repoScope.launch {
-            signUpWithSupabase(name, username, email, phone, pass, dob, gender)
+            signUpWithFirebase(name, username, email, phone, pass, dob, gender)
         }
     }
 
     fun logout() {
         _isAuthenticated.value = false
+        firebaseAuthService?.signOut()
         supabaseClient.signOut()
     }
 
@@ -977,8 +1108,10 @@ class FadxRepository(
     fun toggleReaction(postId: String, reaction: ReactionType) {
         var userReacted = false
         var targetReaction = ReactionType.NONE
+        var targetPost: Post? = null
         _posts.value = _posts.value.map { post ->
             if (post.id == postId) {
+                targetPost = post
                 val currentReaction = post.userReaction
                 val newReaction = if (currentReaction == reaction) ReactionType.NONE else reaction
                 targetReaction = newReaction
@@ -1000,6 +1133,30 @@ class FadxRepository(
             } else post
         }
 
+        // Trigger notification if reaction added
+        if (userReacted) {
+            val postSnippet = targetPost?.text?.take(30) ?: "your post"
+            val reactionEmoji = when (targetReaction) {
+                ReactionType.LOVE -> "loved ❤️"
+                ReactionType.HAHA -> "laughed at 😆"
+                ReactionType.WOW -> "reacted wow 😮 to"
+                ReactionType.SAD -> "reacted sad 😢 to"
+                ReactionType.ANGRY -> "reacted angry 😡 to"
+                else -> "liked 👍"
+            }
+            val actor = if (targetPost != null && targetPost?.author?.id != _currentUser.value.id) {
+                targetPost!!.author
+            } else {
+                _friendsList.value.firstOrNull() ?: _currentUser.value
+            }
+            triggerNotification(
+                type = NotificationType.LIKE,
+                title = "❤️ New Reaction",
+                message = "$reactionEmoji \"$postSnippet...\"",
+                actorUser = actor
+            )
+        }
+
         // Sync like to Supabase post_likes table
         val me = _currentUser.value.id
         repoScope.launch {
@@ -1017,6 +1174,7 @@ class FadxRepository(
 
     fun addComment(postId: String, text: String) {
         if (text.isBlank()) return
+        val targetPost = _posts.value.find { it.id == postId }
         val newComment = Comment(
             id = "c_${UUID.randomUUID()}",
             postId = postId,
@@ -1033,6 +1191,20 @@ class FadxRepository(
                 )
             } else post
         }
+
+        // Trigger comment notification
+        val postSnippet = targetPost?.text?.take(25) ?: "post"
+        val notifActor = if (targetPost != null && targetPost.author.id != _currentUser.value.id) {
+            targetPost.author
+        } else {
+            _friendsList.value.firstOrNull() ?: _currentUser.value
+        }
+        triggerNotification(
+            type = NotificationType.COMMENT,
+            title = "💬 New Comment",
+            message = "commented on \"$postSnippet\": \"${text.trim().take(35)}\"",
+            actorUser = notifActor
+        )
 
         // Sync comment to Supabase comments table
         val me = _currentUser.value
@@ -1198,14 +1370,26 @@ class FadxRepository(
 
     // Video Interactions
     fun toggleVideoLike(videoId: String) {
+        var wasLiked = false
+        var targetVideo: VideoItem? = null
         _videos.value = _videos.value.map {
             if (it.id == videoId) {
                 val liked = !it.isLiked
+                wasLiked = liked
+                targetVideo = it
                 it.copy(
                     isLiked = liked,
                     likesCount = if (liked) it.likesCount + 1 else it.likesCount - 1
                 )
             } else it
+        }
+        if (wasLiked && targetVideo != null) {
+            triggerNotification(
+                type = NotificationType.LIKE,
+                title = "❤️ Video Liked",
+                message = "liked your video: \"${targetVideo!!.title.take(30)}\"",
+                actorUser = targetVideo!!.author
+            )
         }
     }
 
@@ -1233,6 +1417,38 @@ class FadxRepository(
         // Can toggle follow state on any user
     }
 
+    // Sharing Posts
+    fun sharePost(post: Post, friend: User) {
+        _posts.value = _posts.value.map {
+            if (it.id == post.id) it.copy(sharesCount = it.sharesCount + 1) else it
+        }
+        val chatId = getOrCreateChat(friend)
+        val shareSnippet = if (post.text.isNotBlank()) post.text.take(50) else "a photo/video post"
+        sendMessage(
+            chatId = chatId,
+            text = "Shared a post by @${post.author.username}: \"$shareSnippet...\""
+        )
+        triggerNotification(
+            type = NotificationType.SHARE,
+            title = "↗️ Post Shared",
+            message = "shared a post with ${friend.name}",
+            actorUser = friend
+        )
+    }
+
+    fun sharePostExternal(post: Post) {
+        _posts.value = _posts.value.map {
+            if (it.id == post.id) it.copy(sharesCount = it.sharesCount + 1) else it
+        }
+        val actor = _friendsList.value.firstOrNull() ?: _currentUser.value
+        triggerNotification(
+            type = NotificationType.SHARE,
+            title = "↗️ Shared to Feed",
+            message = "shared ${post.author.name}'s post to your timeline",
+            actorUser = actor
+        )
+    }
+
     // Messaging
     fun sendMessage(chatId: String, text: String, type: MessageType = MessageType.TEXT, mediaUrl: String? = null) {
         if (text.isBlank() && mediaUrl == null) return
@@ -1253,6 +1469,7 @@ class FadxRepository(
         _messagesMap.value = updatedMap
 
         // Update thread preview
+        val thread = _chatThreads.value.find { it.id == chatId }
         _chatThreads.value = _chatThreads.value.map {
             if (it.id == chatId) {
                 it.copy(
@@ -1260,6 +1477,50 @@ class FadxRepository(
                     lastMessageTime = "Just now"
                 )
             } else it
+        }
+
+        // Automatic friendly reply with push notification
+        val otherUser = thread?.participants?.firstOrNull { it.id != me.id } ?: _friendsList.value.firstOrNull()
+        if (otherUser != null) {
+            repoScope.launch {
+                delay(1800)
+                val replies = listOf(
+                    "Hey! Got your message, sounds good! 👍",
+                    "Thanks for reaching out! Let's catch up soon.",
+                    "Awesome! I was just checking out your posts 😊",
+                    "Got it! Let me know if you need anything else 💬"
+                )
+                val replyText = replies.random()
+                val replyMsg = ChatMessage(
+                    id = "msg_${UUID.randomUUID()}",
+                    senderId = otherUser.id,
+                    senderName = otherUser.name,
+                    senderAvatar = otherUser.avatarUrl,
+                    text = replyText,
+                    timestamp = "Just now"
+                )
+                val msgs = _messagesMap.value[chatId] ?: emptyList()
+                val map = _messagesMap.value.toMutableMap()
+                map[chatId] = msgs + replyMsg
+                _messagesMap.value = map
+
+                _chatThreads.value = _chatThreads.value.map {
+                    if (it.id == chatId) {
+                        it.copy(
+                            lastMessage = replyText,
+                            lastMessageTime = "Just now",
+                            unreadCount = it.unreadCount + 1
+                        )
+                    } else it
+                }
+
+                triggerNotification(
+                    type = NotificationType.MESSAGE,
+                    title = "✉️ ${otherUser.name}",
+                    message = "sent a message: \"$replyText\"",
+                    actorUser = otherUser
+                )
+            }
         }
     }
 
@@ -1390,23 +1651,44 @@ class FadxRepository(
 
     fun triggerNotification(type: NotificationType, title: String, message: String, actorUser: User? = null) {
         val actor = actorUser ?: _friendsList.value.firstOrNull() ?: _currentUser.value
+        val formattedText = if (message.startsWith(actor.name)) message else "${actor.name} $message"
         val newNotif = NotificationItem(
             id = "notif_${UUID.randomUUID()}",
             type = type,
             actor = actor,
-            text = message,
+            text = formattedText,
             timestamp = "Just now",
             isRead = false
         )
         _notifications.value = listOf(newNotif) + _notifications.value
 
-        appContext?.let { ctx ->
-            com.example.notifications.NotificationHelper.showNotification(
-                context = ctx,
-                notificationId = (System.currentTimeMillis() % 100000).toInt(),
-                title = title,
-                message = "${actor.name} $message"
-            )
+        val pushMasterEnabled = _notificationSettings.value["push_enabled"] ?: true
+        val typeSettingKey = when (type) {
+            NotificationType.LIKE -> "likes"
+            NotificationType.COMMENT, NotificationType.REPLY -> "comments"
+            NotificationType.SHARE -> "shares"
+            NotificationType.MESSAGE -> "messages"
+            NotificationType.FRIEND_REQUEST, NotificationType.FRIEND_ACCEPT -> "friend_requests"
+            else -> "group_activity"
+        }
+        val isSettingEnabled = _notificationSettings.value[typeSettingKey] ?: true
+
+        if (pushMasterEnabled && isSettingEnabled) {
+            val channel = if (type == NotificationType.MESSAGE) {
+                com.example.notifications.NotificationHelper.CHANNEL_ID_MESSAGES
+            } else {
+                com.example.notifications.NotificationHelper.CHANNEL_ID_INTERACTIONS
+            }
+
+            appContext?.let { ctx ->
+                com.example.notifications.NotificationHelper.showNotification(
+                    context = ctx,
+                    notificationId = (System.currentTimeMillis() % 100000).toInt(),
+                    title = title,
+                    message = formattedText,
+                    channelId = channel
+                )
+            }
         }
     }
 

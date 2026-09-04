@@ -38,6 +38,8 @@ fun FadxApp(
     val currentUser by viewModel.currentUser.collectAsState()
     val isAuthenticated by viewModel.isAuthenticated.collectAsState()
     val themeMode by viewModel.themeMode.collectAsState()
+    val isAuthLoading by viewModel.isAuthLoading.collectAsState()
+    val authError by viewModel.authError.collectAsState()
 
     val isDark = when (themeMode) {
         "DARK" -> true
@@ -83,6 +85,7 @@ fun FadxApp(
     val searchResults by viewModel.searchResults.collectAsState()
     val supabaseStatus by viewModel.supabaseConnectionStatus.collectAsState()
     val blockedUserIds by viewModel.blockedUserIds.collectAsState()
+    val notificationSettings by viewModel.notificationSettings.collectAsState()
 
     // Back handling
     BackHandler(enabled = currentScreen !is Screen.Main && currentScreen !is Screen.Welcome) {
@@ -132,9 +135,20 @@ fun FadxApp(
                         is Screen.Login -> {
                             LoginScreen(
                                 onLoginSubmit = { id, pass -> viewModel.login(id, pass) },
-                                onForgotPasswordClick = { viewModel.navigateTo(Screen.ForgotPassword) },
-                                onSignUpClick = { viewModel.navigateTo(Screen.SignUp) },
-                                onBackClick = { viewModel.navigateBack() }
+                                onForgotPasswordClick = {
+                                    viewModel.clearAuthError()
+                                    viewModel.navigateTo(Screen.ForgotPassword)
+                                },
+                                onSignUpClick = {
+                                    viewModel.clearAuthError()
+                                    viewModel.navigateTo(Screen.SignUp)
+                                },
+                                onBackClick = {
+                                    viewModel.clearAuthError()
+                                    viewModel.navigateBack()
+                                },
+                                isLoading = isAuthLoading,
+                                authErrorMessage = authError
                             )
                         }
                         is Screen.SignUp -> {
@@ -142,17 +156,31 @@ fun FadxApp(
                                 onSignUpSubmit = { name, uName, email, phone, pass, dob, gender ->
                                     viewModel.signUp(name, uName, email, phone, pass, dob, gender)
                                 },
-                                onLoginClick = { viewModel.navigateTo(Screen.Login) },
-                                onBackClick = { viewModel.navigateBack() }
+                                onLoginClick = {
+                                    viewModel.clearAuthError()
+                                    viewModel.navigateTo(Screen.Login)
+                                },
+                                onBackClick = {
+                                    viewModel.clearAuthError()
+                                    viewModel.navigateBack()
+                                },
+                                isLoading = isAuthLoading,
+                                authErrorMessage = authError
                             )
                         }
                         is Screen.ForgotPassword -> {
                             ForgotPasswordScreen(
                                 onRecoveryComplete = {
-                                    viewModel.showToast("Password reset successfully. Please log in.")
+                                    viewModel.showToast("Password reset link sent. Please log in.")
                                     viewModel.navigateTo(Screen.Login)
                                 },
-                                onBackClick = { viewModel.navigateBack() }
+                                onBackClick = {
+                                    viewModel.clearAuthError()
+                                    viewModel.navigateBack()
+                                },
+                                onSendResetEmail = { targetEmail ->
+                                    viewModel.sendPasswordReset(targetEmail)
+                                }
                             )
                         }
                         is Screen.Main -> {
@@ -213,6 +241,10 @@ fun FadxApp(
                                         onNotificationClick = { viewModel.showToast("Notification selected") },
                                         onMarkAllRead = { viewModel.markAllNotificationsRead() },
                                         onTestPush = { viewModel.sendTestPushNotification() },
+                                        onTestLike = { viewModel.triggerLikeNotification() },
+                                        onTestComment = { viewModel.triggerCommentNotification() },
+                                        onTestShare = { viewModel.triggerShareNotification() },
+                                        onTestMessage = { viewModel.triggerMessageNotification() },
                                         modifier = Modifier.padding(padding)
                                     )
                                     4 -> MenuHubScreen(
@@ -394,6 +426,12 @@ fun FadxApp(
                                 supabaseStatus = supabaseStatus,
                                 onTestSupabase = { viewModel.testSupabaseConnection() },
                                 onTestNotification = { viewModel.sendTestPushNotification() },
+                                notificationSettings = notificationSettings,
+                                onToggleNotificationSetting = { viewModel.toggleNotificationSetting(it) },
+                                onTestLike = { viewModel.triggerLikeNotification() },
+                                onTestComment = { viewModel.triggerCommentNotification() },
+                                onTestShare = { viewModel.triggerShareNotification() },
+                                onTestMessage = { viewModel.triggerMessageNotification() },
                                 blockedUserIds = blockedUserIds,
                                 onUnblockUser = { viewModel.unblockUser(it) },
                                 onDeleteAccount = { viewModel.deleteAccount() },
@@ -449,13 +487,15 @@ fun FadxApp(
                         friends = friendsList,
                         onDismiss = { activeSharePost = null },
                         onSendDirect = { friend ->
-                            viewModel.showToast("Post shared with ${friend.name}")
+                            viewModel.sharePost(post, friend)
+                            activeSharePost = null
                         },
                         onCopyLink = {
                             viewModel.showToast("Post link copied to clipboard")
                         },
                         onShareExternal = {
-                            viewModel.showToast("Opening system share sheet")
+                            viewModel.sharePostExternal(post)
+                            activeSharePost = null
                         }
                     )
                 }

@@ -1,5 +1,6 @@
 package com.example.ui.screens.auth
 
+import android.util.Patterns
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -221,13 +222,17 @@ fun LoginScreen(
     onLoginSubmit: (String, String) -> Unit,
     onForgotPasswordClick: () -> Unit,
     onSignUpClick: () -> Unit,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    isLoading: Boolean = false,
+    authErrorMessage: String? = null
 ) {
     var identifier by remember { mutableStateOf("alex.vance@fadx.social") }
     var password by remember { mutableStateOf("password123") }
     var passwordVisible by remember { mutableStateOf(false) }
     var rememberMe by remember { mutableStateOf(true) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var localError by remember { mutableStateOf<String?>(null) }
+
+    val displayError = authErrorMessage ?: localError
 
     Scaffold(
         topBar = {
@@ -280,13 +285,40 @@ fun LoginScreen(
                 modifier = Modifier.padding(top = 6.dp)
             )
 
-            Spacer(modifier = Modifier.height(28.dp))
+            // Firebase Auth Badge
+            Spacer(modifier = Modifier.height(14.dp))
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = FadxPrimary.copy(alpha = 0.08f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, FadxPrimary.copy(alpha = 0.2f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = "Security",
+                        tint = FadxPrimary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = "Secured with Supabase Cloud Authentication",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = FadxPrimary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
 
             OutlinedTextField(
                 value = identifier,
                 onValueChange = {
                     identifier = it
-                    errorMessage = null
+                    localError = null
                 },
                 label = { Text("Email, Phone or Username") },
                 leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
@@ -303,7 +335,7 @@ fun LoginScreen(
                 value = password,
                 onValueChange = {
                     password = it
-                    errorMessage = null
+                    localError = null
                 },
                 label = { Text("Password") },
                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
@@ -348,26 +380,46 @@ fun LoginScreen(
                 )
             }
 
-            if (errorMessage != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = errorMessage ?: "",
-                    color = FadxAccentCoral,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium
-                )
+            if (displayError != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = FadxAccentCoral.copy(alpha = 0.12f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, FadxAccentCoral.copy(alpha = 0.3f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ErrorOutline,
+                            contentDescription = "Error",
+                            tint = FadxAccentCoral,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = displayError,
+                            color = FadxAccentCoral,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
             }
 
-            Spacer(modifier = Modifier.height(28.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             Button(
                 onClick = {
                     if (identifier.isBlank() || password.isBlank()) {
-                        errorMessage = "Please fill in all credentials"
+                        localError = "Please fill in all credentials"
                     } else {
                         onLoginSubmit(identifier, password)
                     }
                 },
+                enabled = !isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(54.dp)
@@ -375,11 +427,19 @@ fun LoginScreen(
                 colors = ButtonDefaults.buttonColors(containerColor = FadxPrimary),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Text(
-                    text = "Log In",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        color = Color.White,
+                        strokeWidth = 2.5.dp,
+                        modifier = Modifier.size(22.dp)
+                    )
+                } else {
+                    Text(
+                        text = "Log In",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -409,7 +469,9 @@ fun LoginScreen(
 fun SignUpScreen(
     onSignUpSubmit: (name: String, username: String, email: String, phone: String, pass: String, dob: String, gender: String) -> Unit,
     onLoginClick: () -> Unit,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    isLoading: Boolean = false,
+    authErrorMessage: String? = null
 ) {
     var fullName by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
@@ -420,7 +482,9 @@ fun SignUpScreen(
     var gender by remember { mutableStateOf("Female") }
     var termsAccepted by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var localError by remember { mutableStateOf<String?>(null) }
+
+    val displayError = authErrorMessage ?: localError
 
     Scaffold(
         topBar = {
@@ -473,11 +537,41 @@ fun SignUpScreen(
                 modifier = Modifier.padding(top = 4.dp)
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            // Firebase Auth Badge
+            Spacer(modifier = Modifier.height(12.dp))
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = FadxPrimary.copy(alpha = 0.08f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, FadxPrimary.copy(alpha = 0.2f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.VerifiedUser,
+                        contentDescription = "Supabase Security",
+                        tint = FadxPrimary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = "Supabase Auth & Cloud PostgreSQL",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = FadxPrimary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
 
             OutlinedTextField(
                 value = fullName,
-                onValueChange = { fullName = it },
+                onValueChange = {
+                    fullName = it
+                    localError = null
+                },
                 label = { Text("Full Name") },
                 leadingIcon = { Icon(Icons.Default.Badge, contentDescription = null) },
                 modifier = Modifier.fillMaxWidth(),
@@ -489,32 +583,51 @@ fun SignUpScreen(
 
             OutlinedTextField(
                 value = username,
-                onValueChange = { username = it },
+                onValueChange = {
+                    username = it.filter { char -> char.isLetterOrDigit() || char == '_' }
+                    localError = null
+                },
                 label = { Text("Username") },
                 leadingIcon = { Icon(Icons.Default.AlternateEmail, contentDescription = null) },
+                supportingText = {
+                    if (username.isNotBlank() && username.length < 3) {
+                        Text("Username must be at least 3 characters", color = FadxAccentCoral)
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
                 singleLine = true
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             OutlinedTextField(
                 value = email,
-                onValueChange = { email = it },
+                onValueChange = {
+                    email = it
+                    localError = null
+                },
                 label = { Text("Email Address") },
                 leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                supportingText = {
+                    if (email.isNotBlank() && !Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()) {
+                        Text("Please enter a valid email (e.g. user@example.com)", color = FadxAccentCoral)
+                    }
+                },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
                 singleLine = true
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             OutlinedTextField(
                 value = phone,
-                onValueChange = { phone = it },
+                onValueChange = {
+                    phone = it
+                    localError = null
+                },
                 label = { Text("Phone Number") },
                 leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
@@ -527,7 +640,10 @@ fun SignUpScreen(
 
             OutlinedTextField(
                 value = password,
-                onValueChange = { password = it },
+                onValueChange = {
+                    password = it
+                    localError = null
+                },
                 label = { Text("Password (min 6 chars)") },
                 leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
                 trailingIcon = {
@@ -538,13 +654,18 @@ fun SignUpScreen(
                         )
                     }
                 },
+                supportingText = {
+                    if (password.isNotBlank() && password.length < 6) {
+                        Text("Password must be at least 6 characters", color = FadxAccentCoral)
+                    }
+                },
                 visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
                 singleLine = true
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -588,39 +709,72 @@ fun SignUpScreen(
                 )
             }
 
-            if (errorMessage != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = errorMessage ?: "",
-                    color = FadxAccentCoral,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium
-                )
+            if (displayError != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = FadxAccentCoral.copy(alpha = 0.12f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, FadxAccentCoral.copy(alpha = 0.3f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ErrorOutline,
+                            contentDescription = "Error",
+                            tint = FadxAccentCoral,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = displayError,
+                            color = FadxAccentCoral,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
             Button(
                 onClick = {
-                    if (fullName.isBlank() || username.isBlank() || email.isBlank() || password.length < 6) {
-                        errorMessage = "Please enter valid info and password (min 6 chars)"
+                    val cleanEmail = email.trim()
+                    if (fullName.isBlank() || username.isBlank() || cleanEmail.isBlank() || password.length < 6) {
+                        localError = "Please enter valid info and password (min 6 chars)"
+                    } else if (!Patterns.EMAIL_ADDRESS.matcher(cleanEmail).matches()) {
+                        localError = "Please enter a valid email address (e.g. name@domain.com)"
+                    } else if (username.length < 3) {
+                        localError = "Username must be at least 3 characters"
                     } else if (!termsAccepted) {
-                        errorMessage = "Please accept the Terms & Privacy Policy"
+                        localError = "Please accept the Terms & Privacy Policy"
                     } else {
-                        onSignUpSubmit(fullName, username, email, phone, password, dob, gender)
+                        onSignUpSubmit(fullName.trim(), username.trim(), cleanEmail, phone.trim(), password, dob, gender)
                     }
                 },
+                enabled = !isLoading,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(54.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = FadxPrimary),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Text(
-                    text = "Complete Registration",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        color = Color.White,
+                        strokeWidth = 2.5.dp,
+                        modifier = Modifier.size(22.dp)
+                    )
+                } else {
+                    Text(
+                        text = "Complete Registration",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(20.dp))
@@ -648,7 +802,8 @@ fun SignUpScreen(
 @Composable
 fun ForgotPasswordScreen(
     onRecoveryComplete: () -> Unit,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onSendResetEmail: ((String) -> Unit)? = null
 ) {
     var step by remember { mutableIntStateOf(1) } // 1: Enter email/phone, 2: OTP, 3: New Password
     var recoveryTarget by remember { mutableStateOf("alex.vance@fadx.social") }
@@ -733,7 +888,10 @@ fun ForgotPasswordScreen(
 
                     Button(
                         onClick = {
-                            if (recoveryTarget.isNotBlank()) step = 2
+                            if (recoveryTarget.isNotBlank()) {
+                                onSendResetEmail?.invoke(recoveryTarget)
+                                step = 2
+                            }
                         },
                         modifier = Modifier
                             .fillMaxWidth()

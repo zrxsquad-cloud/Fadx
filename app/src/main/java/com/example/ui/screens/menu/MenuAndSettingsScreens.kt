@@ -41,6 +41,10 @@ fun NotificationsScreen(
     onNotificationClick: (NotificationItem) -> Unit,
     onMarkAllRead: () -> Unit,
     onTestPush: () -> Unit = {},
+    onTestLike: () -> Unit = {},
+    onTestComment: () -> Unit = {},
+    onTestShare: () -> Unit = {},
+    onTestMessage: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -65,6 +69,48 @@ fun NotificationsScreen(
                 }
             }
         )
+
+        // Notification Quick Test & Simulation Bar
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp)
+        ) {
+            Text(
+                text = "Simulate Live Notifications:",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                AssistChip(
+                    onClick = onTestLike,
+                    label = { Text("❤️ Like", fontSize = 11.5.sp) },
+                    modifier = Modifier.weight(1f)
+                )
+                AssistChip(
+                    onClick = onTestComment,
+                    label = { Text("💬 Comment", fontSize = 11.5.sp) },
+                    modifier = Modifier.weight(1.1f)
+                )
+                AssistChip(
+                    onClick = onTestShare,
+                    label = { Text("↗️ Share", fontSize = 11.5.sp) },
+                    modifier = Modifier.weight(1f)
+                )
+                AssistChip(
+                    onClick = onTestMessage,
+                    label = { Text("✉️ Chat", fontSize = 11.5.sp) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
 
         if (notifications.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -98,13 +144,15 @@ fun NotificationsScreen(
 
                                 Box(
                                     modifier = Modifier
-                                        .size(18.dp)
+                                        .size(20.dp)
                                         .clip(CircleShape)
                                         .background(
                                             when (notif.type) {
                                                 NotificationType.LIKE -> FadxAccentCoral
-                                                NotificationType.COMMENT -> FadxPrimary
-                                                NotificationType.FRIEND_REQUEST -> FadxAccentGreen
+                                                NotificationType.COMMENT, NotificationType.REPLY -> FadxPrimary
+                                                NotificationType.SHARE -> Color(0xFF8B5CF6)
+                                                NotificationType.MESSAGE -> FadxSecondary
+                                                NotificationType.FRIEND_REQUEST, NotificationType.FRIEND_ACCEPT -> FadxAccentGreen
                                                 NotificationType.MENTION -> FadxSecondary
                                                 else -> FadxAccentAmber
                                             }
@@ -114,8 +162,10 @@ fun NotificationsScreen(
                                     Icon(
                                         imageVector = when (notif.type) {
                                             NotificationType.LIKE -> Icons.Filled.Favorite
-                                            NotificationType.COMMENT -> Icons.Filled.ModeComment
-                                            NotificationType.FRIEND_REQUEST -> Icons.Filled.PersonAdd
+                                            NotificationType.COMMENT, NotificationType.REPLY -> Icons.Filled.ModeComment
+                                            NotificationType.SHARE -> Icons.Filled.Share
+                                            NotificationType.MESSAGE -> Icons.Filled.Chat
+                                            NotificationType.FRIEND_REQUEST, NotificationType.FRIEND_ACCEPT -> Icons.Filled.PersonAdd
                                             NotificationType.MENTION -> Icons.Filled.AlternateEmail
                                             else -> Icons.Filled.Notifications
                                         },
@@ -327,6 +377,12 @@ fun SettingsScreen(
     supabaseStatus: SupabaseConnectionStatus = SupabaseConnectionStatus.IDLE,
     onTestSupabase: () -> Unit = {},
     onTestNotification: () -> Unit = {},
+    notificationSettings: Map<String, Boolean> = emptyMap(),
+    onToggleNotificationSetting: (String) -> Unit = {},
+    onTestLike: () -> Unit = {},
+    onTestComment: () -> Unit = {},
+    onTestShare: () -> Unit = {},
+    onTestMessage: () -> Unit = {},
     blockedUserIds: Set<String> = emptySet(),
     onUnblockUser: (String) -> Unit = {},
     onDeleteAccount: () -> Unit = {},
@@ -545,6 +601,66 @@ fun SettingsScreen(
                 }
             }
 
+            // Firebase Auth & Cloud Firestore Integration Status
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.VerifiedUser,
+                                    contentDescription = "Firebase Auth",
+                                    tint = FadxPrimary
+                                )
+                                Text("Firebase Auth & Firestore", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFF1B5E20).copy(alpha = 0.2f)
+                            ) {
+                                Text(
+                                    text = "Connected 🟢",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF4CAF50),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "Project: fadx-social-app",
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Authentication: Unique Email & Password with Verification",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Backend Store: Cloud Firestore (users/{uid}) + Local Room DB",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             // Security & 2FA
             item {
                 Card(
@@ -582,7 +698,7 @@ fun SettingsScreen(
                 ) {
                     Column(
                         modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -593,19 +709,130 @@ fun SettingsScreen(
                         }
 
                         Text(
-                            text = "Receive instant alerts for likes, comments, friend requests, and direct chat messages.",
+                            text = "Control which alerts pop up on your device status bar with sound & vibration.",
                             fontSize = 12.5.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
-                        OutlinedButton(
-                            onClick = onTestNotification,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.fillMaxWidth()
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        // Master Push Toggle
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Notifications, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Send Test Push Notification", fontSize = 13.sp)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Allow Push Notifications", fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                                Text("Master switch for all device notifications", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(
+                                checked = notificationSettings["push_enabled"] ?: true,
+                                onCheckedChange = { onToggleNotificationSetting("push_enabled") },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = FadxPrimary)
+                            )
+                        }
+
+                        // Likes
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.Favorite, contentDescription = null, tint = FadxAccentCoral, modifier = Modifier.size(18.dp))
+                                Text("Likes & Reactions", fontSize = 13.sp)
+                            }
+                            Switch(
+                                checked = notificationSettings["likes"] ?: true,
+                                onCheckedChange = { onToggleNotificationSetting("likes") },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = FadxPrimary)
+                            )
+                        }
+
+                        // Comments
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.ModeComment, contentDescription = null, tint = FadxPrimary, modifier = Modifier.size(18.dp))
+                                Text("Comments & Replies", fontSize = 13.sp)
+                            }
+                            Switch(
+                                checked = notificationSettings["comments"] ?: true,
+                                onCheckedChange = { onToggleNotificationSetting("comments") },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = FadxPrimary)
+                            )
+                        }
+
+                        // Shares
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF8B5CF6), modifier = Modifier.size(18.dp))
+                                Text("Post Shares & Reposts", fontSize = 13.sp)
+                            }
+                            Switch(
+                                checked = notificationSettings["shares"] ?: true,
+                                onCheckedChange = { onToggleNotificationSetting("shares") },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = FadxPrimary)
+                            )
+                        }
+
+                        // Messages
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.Chat, contentDescription = null, tint = FadxSecondary, modifier = Modifier.size(18.dp))
+                                Text("Direct Chat Messages", fontSize = 13.sp)
+                            }
+                            Switch(
+                                checked = notificationSettings["messages"] ?: true,
+                                onCheckedChange = { onToggleNotificationSetting("messages") },
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = FadxPrimary)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Test Alerts in Status Bar:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            AssistChip(
+                                onClick = onTestLike,
+                                label = { Text("❤️ Like", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            AssistChip(
+                                onClick = onTestComment,
+                                label = { Text("💬 Comment", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1.1f)
+                            )
+                            AssistChip(
+                                onClick = onTestShare,
+                                label = { Text("↗️ Share", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            AssistChip(
+                                onClick = onTestMessage,
+                                label = { Text("✉️ Chat", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f)
+                            )
                         }
                     }
                 }
